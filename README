@@ -1,0 +1,48 @@
+Description
+============
+This directory has the source and makefiles for Data Translation USB Data
+Acquisition Modules.
+
+./Makefile : Makefile to recursively build all USB module drivers
+	
+./dt9836 : Drivers, applications, include files for DT9836
+
+./firmware : Firmware files for USB modules. 
+
+./ezusb : Header and driver for the Cypress FX2 USB controller.
+          If your Linux disto does *not* have ezusb.ko and ezusb.h then follow
+          these instructions first
+	
+            1) Create a link to the header file ezusb.h in the directory
+                /usr/src/linux-headers-$(uname -r)/include/linux/usb
+
+                Example :
+                ln -s $(pwd)/ezusb/ezusb.h /usr/src/linux-headers-$(uname -r)/include/linux/usb/ezusb.h 
+
+            2) export BUILD_EZUSB=m
+
+BUILD ALL MODULES
+=================
+    Execute make with the default target. Example,
+        make
+
+INSTALL ALL MODULES
+===================
+        make install
+        depmod -a
+
+INSTALL FIRMWARE 
+===================
+    The firmware files under ./firmware must be copied to the /lib/firmware
+    directory only once. This can be done by executing
+
+        make firmware
+
+CLEAN ALL 
+===================
+        make clean
+
+
+Useful references :
+1) https://www.kernel.org/doc/Documentation/kbuild/modules.txt
+
