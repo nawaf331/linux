@@ -1,5 +1,6 @@
 /*
- *   Driver for DT9836 USB data acquisition module
+ *   Driver for DT9836 USB data acquisition module.
+ *  APIs, data structures and macros to interface to the device
  *  
  *  (C) Copyright (c) 2013 Data Translation Inc
  *                    www.datatranslation.com
@@ -23,6 +24,7 @@
 #define	DT9836_DEVICE_H
 #include <linux/usb.h>
 #include "../include/dt9836_driver_fw_if.h"
+#include "../include/dt9836_board_cfg.h"
 
 #ifdef	__cplusplus
 extern "C"
@@ -41,38 +43,49 @@ extern "C"
 #define  DT9836_CMD_WR_TIMEOUT  (5*HZ) // 5 seconds in jiffies
 #define  DT9836_CMD_RD_TIMEOUT  (5*HZ) // 5 seconds in jiffies
     
-struct ep_info
+struct ep_info_t
 {
     size_t              size;       //size of endpoint
     unsigned int        pipe;       //pipe id
 };
-typedef struct ep_info ep_info;
+typedef struct ep_info_t ep_info_t;
+
 /*
- * Device details
+ * DT9836 Device details
  */
-struct dt9836_device
+struct dt9836_device_t
 {
-    struct usb_device       *p_usbdev;  //USB device to communicate with     
-    struct usb_interface	*p_usbif;   //USB interface  
-    ep_info                 message_ep; //IN message pipe
-    ep_info                 command_rd_ep; //IN command response pipe
-    ep_info                 command_wr_ep; //OUT command pipe
-    ep_info                 stream_rd_ep; //IN stream pipe
-    ep_info                 stream_wr_ep;  //OUT streampipe
+    struct usb_device       *p_usbdev;      //USB device to communicate with     
+    struct usb_interface	*p_usbif;       //USB interface  
+	struct kref             kref;           //reference counter
+    ep_info_t               message_ep;     //IN message pipe
+    ep_info_t               command_rd_ep;  //IN command response pipe
+    ep_info_t               command_wr_ep;  //OUT command pipe
+    ep_info_t               stream_rd_ep;   //IN stream pipe
+    ep_info_t               stream_wr_ep;   //OUT streampipe
     uint32_t                serial_num;     //serial number
-    uint16_t                board_type; //board type
     spinlock_t              command_rdwr_spinlock;
+    board_info_t            board_info;     //Board information
 };
-typedef struct dt9836_device dt9836_device;
-typedef dt9836_device * dt9836_device_ptr; 
+typedef struct dt9836_device_t dt9836_device_t;
 
-int     dt9836_create(struct usb_interface	*p_usbif);
-void    dt9836_destroy(struct usb_interface	*p_usbif);
-int     dt9836_command_write (const dt9836_device_ptr p_dt9836_dev, 
-                              const USB_CMD *p_usb_cmd);
-int     dt9836_read_command (const dt9836_device_ptr p_dt9836_dev, 
-                             void *p_buff, int buff_len);
+typedef dt9836_device_t * dt9836_device_ptr; 
 
+int dt9836_command_write (const dt9836_device_ptr p_dt9836_dev, 
+                          USB_CMD *p_usb_cmd);
+
+int dt9836_command_write_read (const dt9836_device_ptr p_dt9836_dev,
+                               USB_CMD * p_usb_cmd, 
+                               void *p_buff, int buff_len);
+
+int dt9836_board_type_read(const dt9836_device_ptr p_dt9836_dev,
+                           board_type_t *p_board_type);
+
+int dt9836_serial_num_read(const dt9836_device_ptr p_dt9836_dev,
+                           uint32_t * p_sernum);
+
+int dt9836_board_info_get(board_type_t board_type, 
+                          board_info_t * board_info_ptr);
 #ifdef	__cplusplus
 }
 #endif

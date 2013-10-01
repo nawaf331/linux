@@ -4,12 +4,6 @@
  *  (C) Copyright (c) 2013 Data Translation Inc
  *                    www.datatranslation.com
  *
- *  Derived from USB Skeleton driver - 2.2
- *  Copyright (C) 2001-2004 Greg Kroah-Hartman (greg@kroah.com)
- * 
- *  Uses APIs exported from ezusb.c authored by
- *  Copyright (C) 1999 - 2002 Greg Kroah-Hartman (greg@kroah.com)
- * 
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation; either version 2 of the License, or
@@ -30,20 +24,47 @@
 #include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/usb/ch9.h>
-#include "dt9836_device.h"
+#include "./dt9836_device.h"
 #include "../include/dt9836_driver_fw_if.h"
 #include "../include/dt9836_hwreg.h"
-/**
-* usb_endpoint_maxp - get endpoint's max packet size
-* @epd: endpoint to be checked
-*
-* Returns @epd's max packet
-*/
-static inline int _usb_endpoint_maxp(const struct usb_endpoint_descriptor *epd)
+#include "dt9836_devinfo.h"
+
+#undef  __DELIM__
+#define __DELIM__ ,
+#undef  _
+#define _(board_type, board_type_id, ad, da, ctr, quad, din, dout) \
+{board_type_id, #board_type, ad, da, ctr, quad, din, dout}
+const board_info_t g_devinfo_tab[]=
 {
-    return __le16_to_cpu(epd->wMaxPacketSize);
+      DEV_INFO
+      {0, NULL}
+};
+#undef _
+#undef __DELIM__
+#define SIZEOF_DEVINFO_TAB  sizeof(g_devinfo_tab)/sizeof(g_devinfo_tab[0])
+      
+#define member_size(type, member) sizeof(((type *)0)->member)
+
+int dt9836_board_info_get(board_type_t board_type, 
+                          board_info_t * board_info_ptr)
+{
+    int i;
+    
+    for (i=0; i < SIZEOF_DEVINFO_TAB; ++i)
+    {
+        if (g_devinfo_tab[i].board_type == board_type)
+        {
+            memcpy (board_info_ptr,  &g_devinfo_tab[i], sizeof(board_info_t));
+            return (0);
+        }
+    }
+    
+    return (-EINVAL);
 }
 
+/*
+ * Write USB_CMD to endpoint EP_ADDR_CMD_WR
+ */
 static int _command_write(const dt9836_device_ptr p_dt9836_dev, 
                           const USB_CMD *p_usb_cmd)
 {
@@ -59,16 +80,95 @@ static int _command_write(const dt9836_device_ptr p_dt9836_dev,
     }
     return (err);
 }
+
+/*
+ * Convert multi-byte parameters in USB_CMD to big endian format. The Cypress
+ * FX2 is big endian.
+ */
+static void _convert_in_params(USB_CMD *p_usb_cmd)
+{
+    int     num_words =0;
+    WORD    *p_param = NULL;
+    
+    switch (p_usb_cmd->CmdCode)
+    {
+        case R_SINGLE_WORD_LB :
+            num_words = 1;
+            p_param = &p_usb_cmd->d.ReadWordInfo.Address;
+            break;
+        case W_SINGLE_WORD_LB :
+            break;
+        case R_MULTI_WORD_LB :
+            break;
+        case W_MULTI_WORD_LB :
+            break;
+        case RMW_SINGLE_WORD_LB :
+            break;
+        case RMW_MULTI_WORD_LB :
+            break;
+        case W_DAC_THRESHOLD :
+            break;
+        default:
+            break;
+    }
+    for (; (num_words > 0); --num_words, ++p_param)
+    {
+        *p_param = cpu_to_be16(*p_param);
+    }
+}
+
+
+/*
+ * Convert multi-byte responses to a USB_CMD from big endian to CPU format.
+ * The Cypress FX2 is big endian.
+ */
+static void _convert_out_params(USB_CMD *p_usb_cmd, void *p_buff, int buff_len)
+{
+    int     num_words =0;
+    WORD    *p_param = (WORD *)p_buff;
+    
+    switch (p_usb_cmd->CmdCode)
+    {
+        case R_SINGLE_WORD_LB :
+            num_words = 1;
+            break;
+        case W_SINGLE_WORD_LB :
+            break;
+        case R_MULTI_WORD_LB :
+            break;
+        case W_MULTI_WORD_LB :
+            break;
+        case RMW_SINGLE_WORD_LB :
+            break;
+        case RMW_MULTI_WORD_LB :
+            break;
+        case W_DAC_THRESHOLD :
+            break;
+        default:
+            break;
+    }
+    for (; (num_words > 0); --num_words, ++p_param)
+    {
+        *p_param = be16_to_cpu(*p_param);
+    }
+}
+
 /*
  * Write USB_CMD to device over the pipe with endpoint address EP_ADDR_CMD_WR
+ * 
+ * Params :
+ *  p_dt9836_dev    : USB device
+ *  p_usb_cmd       : pointer to USB_CMD that must be filled in by caller
  * 
  * Returns :
  *  0 = success, non-zero = failure
  */
 int dt9836_command_write (const dt9836_device_ptr p_dt9836_dev, 
-                          const USB_CMD *p_usb_cmd)
+                          USB_CMD *p_usb_cmd)
 {
     int err;
+    
+    _convert_in_params(p_usb_cmd);
     
     spin_lock(&p_dt9836_dev->command_rdwr_spinlock);
 	err = _command_write (p_dt9836_dev, p_usb_cmd);
@@ -77,28 +177,61 @@ int dt9836_command_write (const dt9836_device_ptr p_dt9836_dev,
     if (err)
     {
         dev_err(&p_dt9836_dev->p_usbif->dev, 
-                "%s ERROR %d usb_bulk_msg", 
-                __func__, err);
+                "%s ERROR %d CmdCode 0x%x", 
+                __func__, err, p_usb_cmd->CmdCode);
     }
     return (err);
 }
-int dt9836_read_command (const dt9836_device_ptr p_dt9836_dev, 
-                             void *p_buff, int buff_len)
+
+/*
+ * Write USB_CMD to device over the pipe with endpoint address EP_ADDR_CMD_WR
+ * and read response to the command over pipe with endpoint address 
+ * EP_ADDR_CMD_RD
+ * 
+ * Params :
+ *  p_dt9836_dev    : USB device
+ *  p_usb_cmd       : pointer to USB_CMD that must be filled in by caller
+ *  p_buff          : pointer to buffer that has response to command
+ *  buff_len        : buffer length. 
+ * 
+ * Returns :
+ *  0 = success, non-zero = failure
+ */
+int dt9836_command_write_read (const dt9836_device_ptr p_dt9836_dev, 
+                               USB_CMD * p_usb_cmd, 
+                               void *p_buff, int buff_len)
 {
-    int err, len;
-	err = usb_bulk_msg (p_dt9836_dev->p_usbdev,
-                        p_dt9836_dev->command_rd_ep.pipe,
-                        p_buff, buff_len, 
-                        &len,
-                        DT9836_CMD_RD_TIMEOUT);
-    if (err)
+    int err1 = 0;
+    int err2 = 0;
+    int len = 0;
+    
+    _convert_in_params(p_usb_cmd);
+    
+    spin_lock(&p_dt9836_dev->command_rdwr_spinlock);
+	err1 = _command_write (p_dt9836_dev, p_usb_cmd);
+    if (!err1)
+    {
+        err2 = usb_bulk_msg (p_dt9836_dev->p_usbdev,
+                            p_dt9836_dev->command_rd_ep.pipe,
+                            p_buff, buff_len, 
+                            &len,
+                            DT9836_CMD_RD_TIMEOUT);
+    }
+    spin_unlock(&p_dt9836_dev->command_rdwr_spinlock);
+    
+    if (err1 || err2 || (len != buff_len))
     {
         dev_err(&p_dt9836_dev->p_usbif->dev, 
-                "%s ERROR %d usb_bulk_msg", 
-                __func__, err);
+                "%s ERROR err1=%d err2=%d usb_bulk_msg", 
+                __func__, err1, err2);
     }
-    return (err);
+    else
+    {
+        _convert_out_params(p_usb_cmd, p_buff, buff_len);
+    }
+    return (err1 ? err1: err2);
 }
+#if 0
 int is_big_endian(void)
 {
     union {
@@ -109,206 +242,40 @@ int is_big_endian(void)
     printk("%s endian\n", (bint.c[0] == 1)?"BIG":"LITTLE");
     return bint.c[0] == 1; 
 }
-static int readtest(const dt9836_device_ptr p_dt9836_dev)
-{
-    USB_CMD dt9836_cmd;
-    uint16_t result[3];
-    uint32_t serial;
-    int err;
-    
-    is_big_endian();
-
-#if 1    
-    dt9836_cmd.CmdCode = R_MULTI_BYTE_I2C_REG;
-	dt9836_cmd.d.ReadI2CMultiInfo.NumReads = sizeof(result);
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[0].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[0].Register = EEPROM_VENDOR_IDL_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[1].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[1].Register = EEPROM_VENDOR_IDH_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[2].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[2].Register = EEPROM_PRODUCT_IDL_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[3].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[3].Register = EEPROM_PRODUCT_IDH_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[4].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[4].Register = EEPROM_DEVICE_IDL_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[5].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[5].Register = EEPROM_DEVICE_IDH_OFFSET;
-    
-    err = dt9836_command_write(p_dt9836_dev, &dt9836_cmd);
-    
-    if (!err)
-    {
-        err = dt9836_read_command(p_dt9836_dev, result, sizeof(result));
-        if (!err)
-        {
-            printk("vend %x prod %x dev %x\n", result[0], result[1], result[2]);
-        }
-    }
-#endif 
-    
-#if 1    
-    dt9836_cmd.CmdCode = R_SINGLE_WORD_LB;
-	dt9836_cmd.d.ReadWordInfo.Address = VERSION_ID;
-    err = dt9836_command_write(p_dt9836_dev, &dt9836_cmd);
-    
-    if (!err)
-    {
-        err = dt9836_read_command(p_dt9836_dev, result, sizeof(uint16_t));
-        if (!err)
-        {
-            printk("VERSION_ID %x\n", result[0]);
-        }
-    }
-    dt9836_cmd.CmdCode = R_SINGLE_WORD_LB;
-	dt9836_cmd.d.ReadWordInfo.Address = cpu_to_be16(VERSION_ID);
-    err = dt9836_command_write(p_dt9836_dev, &dt9836_cmd);
-    
-    if (!err)
-    {
-        err = dt9836_read_command(p_dt9836_dev, result, sizeof(uint16_t));
-        if (!err)
-        {
-            printk("cpu_to_be16 VERSION_ID %x\n", result[0]);
-        }
-    }
 #endif
 
-#if 1
-	dt9836_cmd.CmdCode = R_MULTI_BYTE_I2C_REG;
-	dt9836_cmd.d.ReadI2CMultiInfo.NumReads = sizeof (uint32_t);
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[0].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[0].Register = EEPROM_SER_NUM0_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[1].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[1].Register = EEPROM_SER_NUM1_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[2].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[2].Register = EEPROM_SER_NUM2_OFFSET;
-
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[3].DevAddress = EEPROM_I2C_ADR;
-	dt9836_cmd.d.ReadI2CMultiInfo.Read[3].Register = EEPROM_SER_NUM3_OFFSET;
-
-    err = dt9836_command_write(p_dt9836_dev, &dt9836_cmd);
-    
-    if (!err)
-    {
-        err = dt9836_read_command(p_dt9836_dev, &serial, sizeof(serial));
-        if (!err)
-        {
-            printk("serial # 0x%x %u\n", serial, serial);
-        }
-    }
-#endif
-    
-    return (err);
-}
-
-/*
- * Called from the probe function to create and initialize data structs
- */
-int dt9836_create(struct usb_interface	*p_usbif)
+int dt9836_board_type_read(const dt9836_device_ptr p_dt9836_dev,
+                           board_type_t *p_board_type)
 {
     int err = 0;
-    int ep_found = 0;
-    int i;
-    dt9836_device_ptr p_dt9836_dev;
-    struct usb_host_interface * p_if_desc;
-     
-    //Allocate the device structure
-    p_dt9836_dev = kzalloc(sizeof(dt9836_device), GFP_KERNEL);
-    if (!p_dt9836_dev)
-    {
-        dev_err(&p_usbif->dev, "%s ERROR kzalloc", __func__);
-        return (-ENOMEM);
-    }
-    
-    p_dt9836_dev->p_usbif = p_usbif;
-    p_dt9836_dev->p_usbdev = interface_to_usbdev(p_usbif);
-    spin_lock_init(&p_dt9836_dev->command_rdwr_spinlock);
-    
-    //Get all the endpoints
-    p_if_desc = p_usbif->cur_altsetting;
-    for (i=0; i < p_if_desc->desc.bNumEndpoints; ++i)
-    {
-        struct usb_endpoint_descriptor *p_ep_desc;
-        p_ep_desc = &p_if_desc->endpoint[i].desc;
-        
-        switch (p_ep_desc->bEndpointAddress)
-        {
-            case EP_ADDR_MSG:   //IN
-                p_dt9836_dev->message_ep.size = _usb_endpoint_maxp(p_ep_desc);
-                p_dt9836_dev->command_rd_ep.pipe = 
-                        usb_rcvbulkpipe(p_dt9836_dev->p_usbdev, EP_ADDR_MSG);
-                ++ep_found;
-                break;
-            case EP_ADDR_CMD_WR:    //OUT
-                p_dt9836_dev->command_wr_ep.size = _usb_endpoint_maxp(p_ep_desc);
-                p_dt9836_dev->command_wr_ep.pipe =
-                        usb_sndbulkpipe(p_dt9836_dev->p_usbdev, EP_ADDR_CMD_WR);
-                ++ep_found;
-                break;
-            case EP_ADDR_CMD_RD:    //IN
-                p_dt9836_dev->command_rd_ep.size = _usb_endpoint_maxp(p_ep_desc);
-                p_dt9836_dev->command_rd_ep.pipe = 
-                        usb_rcvbulkpipe(p_dt9836_dev->p_usbdev, EP_ADDR_CMD_RD);
-                ++ep_found;
-                break;
-            case EP_ADDR_STREAM_WR: //OUT
-                p_dt9836_dev->stream_wr_ep.size = _usb_endpoint_maxp(p_ep_desc);
-                p_dt9836_dev->command_wr_ep.pipe =
-                        usb_sndbulkpipe(p_dt9836_dev->p_usbdev, EP_ADDR_STREAM_WR);
-                ++ep_found;
-                break;
-            case EP_ADDR_STREAM_RD: //IN
-                p_dt9836_dev->stream_rd_ep.size = _usb_endpoint_maxp(p_ep_desc);
-                p_dt9836_dev->command_rd_ep.pipe = 
-                        usb_rcvbulkpipe(p_dt9836_dev->p_usbdev, EP_ADDR_STREAM_RD);
-                ++ep_found;
-                break;
-            default :   //unknown endpoint
-                dev_warn(&p_usbif->dev, "%s WARNING unknown ep 0x%x", 
-                        __func__, p_ep_desc->bEndpointAddress);
-        }
-    }
-    
-        dev_err(&p_usbif->dev, "%s line %d", __func__, __LINE__);
-
-    if (!err || (ep_found == DT9836_NUM_ENDPOINTS))
-    {
-printk("%s usb_if.dev %x usbdev.dev %x", 
-        __func__, (uint32_t)&p_usbif->dev, (uint32_t)&p_dt9836_dev->p_usbdev->dev);
-
-        usb_set_intfdata(p_usbif, p_dt9836_dev);
-        
-        //readtest(p_dt9836_dev);
-    }
-    else
-    {
-        kfree(p_dt9836_dev);
-    }
-    
+    USB_CMD cmd;
+    //Get the board type
+    cmd.CmdCode = R_SINGLE_WORD_LB;
+    cmd.d.ReadWordInfo.Address = VERSION_ID;
+    err = dt9836_command_write_read(p_dt9836_dev, &cmd,
+                                    p_board_type,
+                                    sizeof(*p_board_type));
     return (err);
 }
 
-/*
- * Called from the disconnect function
- */
-void dt9836_destroy(struct usb_interface *p_usbif)
+
+int dt9836_serial_num_read(const dt9836_device_ptr p_dt9836_dev,
+                           uint32_t * p_sernum)
 {
-    dt9836_device_ptr p_dev;
-    
-    p_dev = usb_get_intfdata(p_usbif);
-	usb_set_intfdata(p_usbif, NULL);
-    
-    if (!p_dev)
+    int err = 0;
+    int i;
+    USB_CMD cmd;
+    //Get the board serial number
+    cmd.CmdCode = R_MULTI_BYTE_I2C_REG;
+    cmd.d.ReadI2CMultiInfo.NumReads = sizeof (sizeof(p_dt9836_dev->serial_num));
+    for (i=0; i < cmd.d.ReadI2CMultiInfo.NumReads; ++i)
     {
-        kfree(p_dev);
+        cmd.d.ReadI2CMultiInfo.Read[i].DevAddress = EEPROM_I2C_ADR;
+        cmd.d.ReadI2CMultiInfo.Read[i].Register = EEPROM_SER_NUM0_OFFSET + i;
     }
+    err = dt9836_command_write_read(p_dt9836_dev, &cmd,
+                                    p_sernum,
+                                    sizeof(*p_sernum));
+    return (err);
 }
+
