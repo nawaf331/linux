@@ -1,5 +1,6 @@
 /*
- *  DT9836 driver
+ *	Driver for DT9836 USB data acquisition module.
+ *  This file has the declarations for the digital input subsystem
  *  
  *  (C) Copyright (c) 2013 Data Translation Inc
  *                    www.datatranslation.com
@@ -18,34 +19,21 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+#ifndef DT9836_DIN_H
+#define	DT9836_DIN_H
 
-#ifndef DT98xx_DRIVER
-#define	DT98xx_DRIVER
-
+#include "dt9836_device.h"
 #ifdef	__cplusplus
-extern "C" {
+extern "C"
+{
 #endif
-#define DRIVER_AUTHOR	"Data Translation Inc."
-#define DRIVER_DESC	"DT9836 driver"
-#define DRIVER_ALIAS    "dt9836"
-#define DATX_VENDOR_ID	(0x0867)
-#define DT9836_PRE_ID   (0x9836)        //Product id *before* firmware download
 
-//TO_DO  move to version.h file
-#define DRIVER_VERSION  "0.0.0.2"
+int din_set_config(struct dt9836_device *, const subsystem_config_t *);
+int din_get_single(struct dt9836_device *, single_value_t *); 
 
-/*
- * Table of USB product ids handled by this driver
- * Each entry has the following parameters.
- * 1) idProduct of USB Device Descriptor handled by this driver
- */
-#define DT9836_TAB      \
-_(DT9836_PRE_ID         ) __DELIM__ \
-_(0x3698                ) __DELIM__ \
-    
 #ifdef	__cplusplus
 }
 #endif
 
-#endif	/* DT98xx_DRIVER */
+#endif	/* DT9836_DIN_H */
 

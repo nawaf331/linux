@@ -7,7 +7,8 @@ ifneq ($(KERNELRELEASE),)
     dt9836-objs :=  dt9836_device.o \
 		    dt9836_driver.o \
 		    dt9836_sysfs.o \
-		    dt9836_fileop.o
+		    dt9836_fileop.o \
+		    dt9836_din.o
 
 # Otherwise we were called directly from the command
 # line; invoke the kernel build system.

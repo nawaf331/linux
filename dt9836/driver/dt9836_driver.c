@@ -32,10 +32,16 @@
 #include <linux/usb.h>
 #include <linux/usb/ezusb.h>
 #include <linux/timer.h>
+#include <linux/mutex.h>
+#include <asm-generic/errno.h>
 
-#include "./dt9836_driver.h"
-#include "./dt9836_device.h"
-#include "./dt9836_sysfs.h"
+#include "dt9836_driver.h"
+#include "dt9836_device.h"
+#include "dt9836_sysfs.h"
+#include "dt9836_din.h"
+
+#include "../include/dt9836_ioctl.h"
+#include "../include/dt9836_hwreg.h"
 
 //Cypress vendor command 0xA3 handler to write to external RAM
 #define A3LOAD_FW   "datx/a3load.fw"
@@ -50,15 +56,23 @@ static int _firmware_load(struct usb_interface *p_usb_if);
 
 static int _dt9836_open(struct inode *inode, struct file *file);
 static int _dt9836_release(struct inode *inode, struct file *file);
-static ssize_t _dt9836_read(struct file *file, char *buffer, size_t count,
-			 loff_t *ppos);
-
+//static ssize_t _dt9836_read(struct file *file, char *buffer, size_t count,
+//			 loff_t *ppos);
+static long _dt9836_ioctl(struct file *file, unsigned int cmd,
+                          unsigned long arg);
+static long _dt9836_get_config(dt9836_device_ptr p_dt9836_dev,
+                               unsigned long arg);
+static long _dt9836_set_config(dt9836_device_ptr p_dt9836_dev,
+                               unsigned long arg);
+static long _dt9836_get_single(dt9836_device_ptr p_dt9836_dev,
+                               unsigned long arg);
 
 static int _device_probe (struct usb_interface *p_usb_if,
                             const struct usb_device_id *p_usb_devid);
 static void _device_disconnect (struct usb_interface *p_usb_if);
 static int  _dt9836_create(struct usb_interface	*p_usbif);
 static void _dt9836_destroy(struct kref *p_kref);
+static void _dt9836_subsystems_init(dt9836_device_ptr p_dt9836_dev);
 
 
 /* table of devices that work with this driver */
@@ -75,7 +89,7 @@ static const struct usb_device_id g_dev_id_tab[]=
 
 MODULE_DEVICE_TABLE (usb, g_dev_id_tab);
 
-static struct usb_driver dt9836_driver = 
+static struct usb_driver g_dt9836_driver = 
 {
     .name       = "dt9836",
     .probe      = _device_probe,
@@ -86,20 +100,33 @@ static struct usb_driver dt9836_driver =
 	//.post_reset = device_post_reset,
     .id_table   = g_dev_id_tab
 };
+
 static const struct file_operations _dt9836_fops = 
 {
 	.owner =	THIS_MODULE,
-	.read =		_dt9836_read,
+	//.read =		_dt9836_read,
 	//.write =	skel_write,
 	.open =		_dt9836_open,
 	.release =	_dt9836_release,
 	//.flush =	skel_flush,
 	//.llseek =	noop_llseek,
+    .unlocked_ioctl = _dt9836_ioctl,
 };
 
 /*
+ * Mutex to serialize kref_get and kref_get. This is to abide by rule 3 in
+ * Documentation/kref.txt
+ * If the code attempts to gain a reference to a kref-ed structure
+   without already holding a valid pointer, it must serialize access
+   where a kref_put() cannot occur during the kref_get(), and the
+   structure must remain valid during the kref_get().
+ */
+static DEFINE_MUTEX(g_mutex);
+
+/*
  * usb class driver info in order to get a minor number from the usb core,
- * and to have the device registered with the driver core
+ * and to have the device registered with the driver core. The %d is the minor
+ * number assigned
  * 
  * The .name device will be created under /dev. The following initialization 
  * for .name will not work
@@ -112,6 +139,28 @@ static struct usb_class_driver _dt9836_class =
 	.fops =		&_dt9836_fops,
 };
 
+/*
+ * Initialize all members in da_subsystem[]  
+ */
+static void _dt9836_subsystems_init(dt9836_device_ptr p_dt9836_dev)
+{
+    int i;
+    da_subsystem_t *p_sub;
+    //Configuration parameters
+    for (i=0, p_sub = p_dt9836_dev->da_subsystem ; 
+         i < DT9836_MAX_SUBSYSTEM; 
+         ++i, ++p_sub)
+    {
+        p_sub->config.data_flow = OL_DF_SINGLEVALUE;
+    }
+    
+    //DIN subsystem
+    p_sub = &p_dt9836_dev->da_subsystem[DT9836_DIN_SUBSYSTEM];
+    p_sub->config.subsystem_type = OLSS_DIN;
+    p_sub->set_config = din_set_config;
+    p_sub->get_single = din_get_single;
+}
+
 /**
 * usb_endpoint_maxp - get endpoint's max packet size
 * @epd: endpoint to be checked
@@ -123,6 +172,222 @@ static inline int _usb_endpoint_maxp(const struct usb_endpoint_descriptor *epd)
     return __le16_to_cpu(epd->wMaxPacketSize);
 }
 
+/*
+ * Handler for IOCTL_READ_SUBSYS_CFG
+ */
+static long _dt9836_get_config(dt9836_device_ptr p_dt9836_dev,
+                               unsigned long arg)
+{
+    OLSS olss;
+    int i;
+    long retval = 0;
+    const subsystem_config_t *cfg_ptr = NULL;
+    
+    //Get the subsystem type in the icotl params
+    if (get_user(olss, (OLSS __user*)arg))
+    {
+        return (-EFAULT);
+    }
+    /*Iterate over all subsystems and get the config for the
+      specified one */
+    for (i=0; i < DT9836_MAX_SUBSYSTEM; ++i)
+    {
+        if (p_dt9836_dev->da_subsystem[i].config.subsystem_type==olss)
+        {
+            cfg_ptr = &p_dt9836_dev->da_subsystem[i].config;
+            break;
+        }
+    }
+    //Bad subsystem
+    if (!cfg_ptr)
+    {
+        return (-EINVAL);
+    }
+    
+    spin_lock(&p_dt9836_dev->da_subsystem_spinlock);
+    if (copy_to_user((void __user *)arg,  (void *)cfg_ptr,
+                     sizeof(subsystem_config_t))) 
+    {
+        retval = (-EFAULT);
+    }                           
+    spin_unlock(&p_dt9836_dev->da_subsystem_spinlock);
+    
+    return (retval);
+}
+
+
+/*
+ * Handler for IOCTL_WRITE_SUBSYS_CFG
+ */
+static long _dt9836_set_config(dt9836_device_ptr p_dt9836_dev,
+                               unsigned long arg)
+{
+    OLSS olss;
+    int i;
+    long retval = -EINVAL; //default error
+    
+    //Get the subsystem type in the icotl params
+    if (get_user(olss, (OLSS __user*)arg))
+    {
+        return (-EFAULT);
+    }
+    /*Iterate over all subsystems and set the config for the
+      specified one */
+    for (i=0; i < DT9836_MAX_SUBSYSTEM; ++i)
+    {
+        if (p_dt9836_dev->da_subsystem[i].config.subsystem_type == olss)
+        {
+            if (p_dt9836_dev->da_subsystem[i].set_config)
+            {
+                subsystem_config_t cfg;
+                if (copy_from_user((void *)&cfg, (void __user *)arg,  
+                                    sizeof(subsystem_config_t))) 
+                {
+                    retval = -EFAULT;
+                }                           
+                else
+                {
+                    retval = p_dt9836_dev->da_subsystem[i].set_config
+                                ((struct dt9836_device *)p_dt9836_dev, &cfg);
+                }
+            }
+            else
+            {
+                retval = -ENOSYS; /* 38 Function not implemented */
+            }
+            break;
+        }
+    }
+
+    return (retval);
+}
+
+/*
+ * Handler for IOCTL_GET_SINGLE_VALUE
+ */
+static long _dt9836_get_single(dt9836_device_ptr p_dt9836_dev,
+                               unsigned long arg)
+{
+    OLSS olss;
+    int i;
+    long retval = -EINVAL; //default error
+    
+    //Get the subsystem type in the icotl params
+    if (get_user(olss, (OLSS __user*)arg))
+    {
+        return (-EFAULT);
+    }
+    /*
+     * Iterate over all subsystems and get the single value from the specified
+     * one 
+     */
+    for (i=0; i < DT9836_MAX_SUBSYSTEM; ++i)
+    {
+        if (p_dt9836_dev->da_subsystem[i].config.subsystem_type == olss)
+        {
+            if (p_dt9836_dev->da_subsystem[i].get_single)
+            {
+                single_value_t single_val;
+                if (copy_from_user((void *)&single_val, (void __user *)arg,  
+                                    sizeof(single_value_t))) 
+                {
+                    retval = -EFAULT;
+                }                           
+                else
+                {
+                    retval = p_dt9836_dev->da_subsystem[i].get_single
+                                ((struct dt9836_device *)p_dt9836_dev, &single_val);
+                    if (!retval)
+                    {
+                        if (copy_to_user((void __user *)arg,(void *)&single_val,   
+                                           sizeof(single_value_t))) 
+                        {
+                            retval = -EFAULT;
+                        }                           
+                    }
+                }
+            }
+            else
+            {
+                retval = -ENOSYS; /* 38 Function not implemented */
+            }
+            break;
+        }
+    }
+
+    return (retval);
+}
+
+/*
+ * IOCTL handlers
+ */
+static long _dt9836_ioctl(struct file *p_file, unsigned int cmd,
+                          unsigned long arg)
+{
+    dt9836_device_ptr p_dt9836_dev;
+    long retval = 0;
+     
+    p_dt9836_dev = p_file->private_data;
+    if (!p_dt9836_dev)
+    {
+		return (-ENODEV);
+    }
+	
+    dev_info(&p_dt9836_dev->p_usbif->dev,
+		"%s: cmd=0x%x (nr=%d len=%d dir=%d)\n", 
+        __func__, cmd,_IOC_NR(cmd), _IOC_SIZE(cmd), _IOC_DIR(cmd));
+
+    //Prevent any commands if the device is disconnected
+    if (atomic_read (&p_dt9836_dev->connected) != USB_CONNECTED)
+    {
+        retval = -ENOTCONN;
+    }
+    else
+    {
+        switch (cmd) 
+        {
+            case IOCTL_READ_BOARD_INFO:
+            {
+                if (copy_to_user((void __user *)arg, 
+                                 (unsigned char *)&p_dt9836_dev->board_info,
+                                  _IOC_SIZE(cmd))) 
+                {
+                    retval = -EFAULT;
+                }          
+            }
+            break;
+            
+            case IOCTL_READ_SUBSYS_CFG:
+            {
+                retval = _dt9836_get_config(p_dt9836_dev, arg);
+            }
+            break;
+            
+            case IOCTL_WRITE_SUBSYS_CFG:
+            {
+                retval = _dt9836_set_config(p_dt9836_dev, arg);
+            }
+            break;
+            
+            case IOCTL_GET_SINGLE_VALUE:
+            {
+                retval = _dt9836_get_single(p_dt9836_dev, arg);
+            }
+            break;
+            
+            default:
+                retval = -EBADRQC;   /*56 Invalid request code */
+                break;
+        }
+    }
+    
+    if (retval)
+    {
+       dev_err(&p_dt9836_dev->p_usbif->dev,"%s ERROR %d\n", 
+               __func__, (unsigned int)retval);
+    }
+	return retval;
+}
 
 static int _dt9836_open(struct inode *p_inode, struct file *p_file)
 {
@@ -133,34 +398,35 @@ static int _dt9836_open(struct inode *p_inode, struct file *p_file)
 
 	subminor = iminor(p_inode);
 
-	p_usb_if = usb_find_interface(&dt9836_driver, subminor);
+	p_usb_if = usb_find_interface(&g_dt9836_driver, subminor);
 	if (!p_usb_if) 
     {
 		pr_err("%s - ERROR, can't find device for minor %d\n",
 			__func__, subminor);
-		err = -ENODEV;
-		goto exit;
+		return (-ENODEV);
 	}
 
+    mutex_lock(&g_mutex); //Rule #3 of kref_get/put
+    
 	p_dt9836_dev = usb_get_intfdata(p_usb_if);
 	if (!p_dt9836_dev) 
     {
 		pr_err("%s - ERROR usb_get_intfdata\n", __func__);
-		err = -ENODEV;
-		goto exit;
+		return (-ENODEV);
 	}
 #if 0
 	err = usb_autopm_get_interface(p_usb_if);
 	if (err)
 		goto exit;
 #endif
-
 	/* increment our usage count for the device */
 	kref_get(&p_dt9836_dev->kref);
 
 	/* save our object in the file's private structure */
 	p_file->private_data = p_dt9836_dev;
-exit:
+    
+    mutex_unlock(&g_mutex);    //Rule #3 of kref_get/put
+
     pr_info("%s returned %d", __func__, err);
 	return err;
 }
@@ -198,14 +464,14 @@ static int _dt9836_release(struct inode *inode, struct file *p_file)
 #endif    
 	return 0;
 }
-
+#if 0
 static ssize_t _dt9836_read(struct file *file, char *buffer, size_t count,
 			 loff_t *ppos)
 {
     pr_info("%s", __func__);
     return 0;
 }
-
+#endif
 static int _firmware_load(struct usb_interface *p_usb_if)
 {
     int err;
@@ -280,6 +546,14 @@ static int _dt9836_create(struct usb_interface	*p_usbif)
     p_dt9836_dev->p_usbdev = usb_get_dev(interface_to_usbdev(p_usbif));
     kref_init(&p_dt9836_dev->kref);
     spin_lock_init(&p_dt9836_dev->command_rdwr_spinlock);
+    spin_lock_init(&p_dt9836_dev->da_subsystem_spinlock);
+    
+#warning Are shadow regs needed??    
+    //Initialize the shadow registers
+    p_dt9836_dev->shadow_reg.output_control = DAC3_CLEAR_N | DAC2_CLEAR_N |
+                                              DAC1_CLEAR_N | DAC0_CLEAR_N |
+                                              DAC_RESET_ALL_N;
+    p_dt9836_dev->shadow_reg.in_control = 0;
     
     //Get all the endpoints
     p_if_desc = p_usbif->cur_altsetting;
@@ -327,12 +601,13 @@ static int _dt9836_create(struct usb_interface	*p_usbif)
     }
     if (ep_found != DT9836_NUM_ENDPOINTS) 
     {
-        dev_err(&p_usbif->dev, "%s ERROR #of ep ", __func__);
+        dev_err(&p_usbif->dev, "%s ERROR #of ep %d", __func__, ep_found);
         err = -EINVAL;
     }
 
     while (!err)
     {
+        board_type_t board_type;
 #if 0        
 printk("%s usb_if.dev %x\n usbdev %x\nusbdev.dev %x\np_dt9836_dev %x\n", 
         __func__, (uint32_t)&p_usbif->dev, 
@@ -340,7 +615,8 @@ printk("%s usb_if.dev %x\n usbdev %x\nusbdev.dev %x\np_dt9836_dev %x\n",
        (uint32_t)&p_dt9836_dev->p_usbdev->dev,
        (uint32_t)p_dt9836_dev);
 #endif        
-        err = dt9836_board_type_read(p_dt9836_dev, &p_dt9836_dev->board_type);
+        //Read the board type
+        err = dt9836_reg_read(p_dt9836_dev, VERSION_ID, &board_type);
         if (err)
         {
             dev_err(&p_usbif->dev, "%s ERROR %d board type", 
@@ -348,14 +624,34 @@ printk("%s usb_if.dev %x\n usbdev %x\nusbdev.dev %x\np_dt9836_dev %x\n",
             break;
         }
         
-        err = dt9836_serial_num_read(p_dt9836_dev, &p_dt9836_dev->serial_num);
+        //Get the board's static configuration corresponding to the board type
+        err = dt9836_board_info_get(board_type, &p_dt9836_dev->board_info);
+        if (err)
+        {
+            dev_err(&p_usbif->dev, "%s ERROR %d dt9836_board_info_get", 
+                    __func__, err);
+            break;
+        }
+        
+        //Read the serial number
+        err = dt9836_serial_num_read(p_dt9836_dev, 
+                                     &p_dt9836_dev->board_info.serial_num);
         if (err)
         {
             dev_err(&p_usbif->dev, "%s ERROR %d read serail#", 
                     __func__, err);
             break;
         }
-         
+        
+        //Initialize a bunch of h/w registers
+        err = dt9836_hw_init(p_dt9836_dev);
+        if (err)
+        {
+            dev_err(&p_usbif->dev, "%s ERROR %d device register init\n", 
+                    __func__,err);
+            break;
+        }
+        
         err = dev_set_drvdata(&p_dt9836_dev->p_usbdev->dev, p_dt9836_dev);
         if (err)
         {
@@ -380,6 +676,12 @@ printk("%s usb_if.dev %x\n usbdev %x\nusbdev.dev %x\np_dt9836_dev %x\n",
                     __func__, err);
             break;
         }
+        
+        //Initialize all subsystem's configuration
+        _dt9836_subsystems_init(p_dt9836_dev);
+        
+        //Flag the device as being connected now
+        atomic_set(&p_dt9836_dev->connected, USB_CONNECTED);
         
         usb_set_intfdata(p_usbif, p_dt9836_dev);
         break;
@@ -417,7 +719,7 @@ static int _device_probe (struct usb_interface *p_usb_if,
     if (!err)
     {
     dev_info(&p_usb_if->dev,
-              "%s idProduct %x bcdDevice %x:%x version \"%s\" attached to %d\n",
+              "%s idProduct %x bcdDevice %x:%x version \"%s\" minor# %d\n",
               __func__, 
               p_usb_devid->idProduct, 
               p_usb_devid->bcdDevice_hi, p_usb_devid->bcdDevice_lo,
@@ -435,10 +737,11 @@ static void _dt9836_destroy(struct kref *p_kref)
     p_dt9836_dev = container_of(p_kref, dt9836_device_t, kref);
     
     //dt9836_sysfs_deregister(p_dt9836_dev);
+
     dev_set_drvdata(&p_dt9836_dev->p_usbdev->dev, NULL);
     usb_put_dev(p_dt9836_dev->p_usbdev);
     kfree(p_dt9836_dev);
-   printk("%s\n", __func__);
+    printk("%s\n", __func__);
 }
 
 static void _device_disconnect (struct usb_interface *p_usb_if)
@@ -447,14 +750,19 @@ static void _device_disconnect (struct usb_interface *p_usb_if)
     
     printk("%s\n", __func__);
     
+    mutex_lock(&g_mutex);
     p_dt9836_dev = usb_get_intfdata(p_usb_if);
 	
     usb_set_intfdata(p_usb_if, NULL);
 	/* give back our minor */
 	usb_deregister_dev(p_usb_if, &_dt9836_class);
+            
+    //Flag the device as disconnected now
+    atomic_set(&p_dt9836_dev->connected, (!USB_CONNECTED));
 	
     /* decrement our usage count */
 	kref_put(&p_dt9836_dev->kref, _dt9836_destroy);
+    mutex_unlock(&g_mutex);
 }
 #if 0
 static int device_suspend(struct usb_interface *p_usb_if, pm_message_t message)
@@ -514,7 +822,7 @@ static void __exit __driver##_exit(void) \
 } \
 module_exit(__driver##_exit);
 
-module_driver (dt9836_driver, usb_register, usb_deregister);
+module_driver (g_dt9836_driver, usb_register, usb_deregister);
 
 MODULE_AUTHOR       (DRIVER_AUTHOR);
 MODULE_DESCRIPTION  (DRIVER_DESC);

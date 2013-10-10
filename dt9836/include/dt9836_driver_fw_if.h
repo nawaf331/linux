@@ -38,8 +38,6 @@
 #define _PACK_
 #else
 #define _PACK_  __attribute__ ((__packed__))
-typedef uint8_t     BYTE;
-typedef uint16_t    WORD;
 #endif
 
 
@@ -154,15 +152,15 @@ typedef enum _PACK_
 /* This structure is used with the W_BYTE_USB_REG */
 typedef struct _PACK_ 
 {
-   BYTE             Address;
-   BYTE             DataVal;
+   uint8_t             Address;
+   uint8_t             DataVal;
 } WRITE_BYTE_INFO, *pWRITE_BYTE_INFO;
 
 
 /* This structure is used with the R_BYTE_USB_REG */
 typedef struct _PACK_ 
 {
-   BYTE             Address;
+   uint8_t             Address;
 } READ_BYTE_INFO, *pREAD_BYTE_INFO;
 
 
@@ -170,17 +168,17 @@ typedef struct _PACK_
 /* This structure is used with the R_MULTI_BYTE_USB_REG */
 typedef struct _PACK_ 
 {
-   BYTE             NumWrites;
+   uint8_t             NumWrites;
    WRITE_BYTE_INFO  Write[MAX_NUM_MULTI_BYTE_WRTS];
 } WRITE_MULTI_INFO, *pWRITE_MULTI_INFO;
 
 
-#define MAX_NUM_MULTI_BYTE_RDS  ((MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (BYTE))
+#define MAX_NUM_MULTI_BYTE_RDS  ((MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (uint8_t))
 /* This structure is used with the R_MULTI_BYTE_USB_REG */
 typedef struct _PACK_ 
 {
-   BYTE             NumReads;
-   BYTE             Addresses[MAX_NUM_MULTI_BYTE_RDS];
+   uint8_t             NumReads;
+   uint8_t             Addresses[MAX_NUM_MULTI_BYTE_RDS];
 } READ_MULTI_INFO, *pREAD_MULTI_INFO;
 
 
@@ -189,9 +187,9 @@ typedef struct _PACK_
    and RMW_MULTI_BYTE_USB_REG */
 typedef struct _PACK_ 
 {
-   BYTE             Address;
-   BYTE             AndMask;
-   BYTE             OrVal;
+   uint8_t             Address;
+   uint8_t             AndMask;
+   uint8_t             OrVal;
 } RMW_BYTE_INFO, *pRMW_BYTE_INFO;
 
    /* This structure is used with the RMW_MULTI_BYTE_USB_REG and
@@ -199,7 +197,7 @@ typedef struct _PACK_
 #define MAX_NUM_MULTI_BYTE_RMWS  ((MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (RMW_BYTE_INFO))
 typedef struct _PACK_ 
 {
-   BYTE             NumRMWs;
+   uint8_t             NumRMWs;
    RMW_BYTE_INFO    ByteInfo[MAX_NUM_MULTI_BYTE_RMWS];
 } RMW_MULTI_INFO, *pRMW_MULTI_INFO;
 
@@ -212,16 +210,16 @@ typedef struct _PACK_
 /* This structure is used with the W_BYTE_I2C_REG */
 typedef struct _PACK_ 
 {
-   BYTE        DevAddress;    // Device address
-   BYTE        Register;      // A register or entity within the device
-   BYTE        DataVal;       // Data value to write to the Register
+   uint8_t        DevAddress;    // Device address
+   uint8_t        Register;      // A register or entity within the device
+   uint8_t        DataVal;       // Data value to write to the Register
 } WRITE_I2C_BYTE_INFO, *pWRITE_I2C_BYTE_INFO;
 
 /* This structure is used with the R_BYTE_I2C_REG */
 typedef struct _PACK_
 {
-   BYTE        DevAddress;    // Device address
-   BYTE        Register;      // A register or entity within the device
+   uint8_t        DevAddress;    // Device address
+   uint8_t        Register;      // A register or entity within the device
 } READ_I2C_BYTE_INFO, *pREAD_I2C_BYTE_INFO;
 
 #define MAX_NUM_I2C_MULTI_BYTE_WRTS  (( MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (WRITE_I2C_BYTE_INFO))
@@ -229,7 +227,7 @@ typedef struct _PACK_
 /* This structure is used with the W_MULTI_BYTE_I2C_REG */
 typedef struct _PACK_
 {
-   BYTE             NumWrites;
+   uint8_t             NumWrites;
    WRITE_I2C_BYTE_INFO  Write[MAX_NUM_I2C_MULTI_BYTE_WRTS];
 } WRITE_I2C_MULTI_INFO, *pWRITE_I2C_MULTI_INFO;
 
@@ -238,7 +236,7 @@ typedef struct _PACK_
 /* This structure is used with the R_MULTI_BYTE_I2C_REG */
 typedef struct _PACK_
 {
-   BYTE             NumReads;
+   uint8_t             NumReads;
    READ_I2C_BYTE_INFO  Read[MAX_NUM_I2C_MULTI_BYTE_RDS];
 } READ_I2C_MULTI_INFO, *pREAD_I2C_MULTI_INFO;
 
@@ -253,15 +251,15 @@ typedef struct _PACK_
 
 typedef struct _PACK_
 {
-   WORD             Address;
-   WORD             DataVal;
+   uint16_t             Address;
+   uint16_t             DataVal;
 } WRITE_WORD_INFO, *pWRITE_WORD_INFO;
 
 /* This structure is used with the W_SINGLE_WORD_LB */
 
 typedef struct _PACK_
 {
-   WORD             Address;
+   uint16_t             Address;
 } READ_WORD_INFO, *pREAD_WORD_INFO;
 
 #define MAX_NUM_MULTI_WORD_WRTS  (( MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (WRITE_WORD_INFO))
@@ -269,18 +267,18 @@ typedef struct _PACK_
 
 typedef struct _PACK_
 {
-   BYTE             NumWrites;
+   uint8_t             NumWrites;
    WRITE_WORD_INFO  Write[MAX_NUM_MULTI_WORD_WRTS];
 } WRITE_MULTI_WORD_INFO, *pWRITE_MULTI_WORD_INFO;
 
 
-#define MAX_NUM_MULTI_WORD_RDS  ((MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (WORD))
+#define MAX_NUM_MULTI_WORD_RDS  ((MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (uint16_t))
 /* This structure is used with the R_MULTI_BYTE_REG */
 
 typedef struct _PACK_
 {
-   BYTE             NumReads;
-   WORD             Addresses[MAX_NUM_MULTI_WORD_RDS];
+   uint8_t             NumReads;
+   uint16_t             Addresses[MAX_NUM_MULTI_WORD_RDS];
 } READ_MULTI_WORD_INFO, *pREAD_MULTI_WORD_INFO;
 
 /* This structure is used with the RMW_SINGLE_WORD_LB,
@@ -288,9 +286,9 @@ typedef struct _PACK_
 
 typedef struct _PACK_
 {
-   WORD             Address;
-   WORD             AndMask;
-   WORD             OrVal;
+   uint16_t             Address;
+   uint16_t             AndMask;
+   uint16_t             OrVal;
 } RMW_WORD_INFO, *pRMW_WORD_INFO;
 
    /* This structure is used with the RMW_MULTI_WORD_LB and
@@ -299,7 +297,7 @@ typedef struct _PACK_
 #define MAX_NUM_MULTI_WORD_RMWS  ((MAX_WRITE_CMD_PIPE_SIZE - 4 - 1) / sizeof (RMW_WORD_INFO))//
 typedef struct _PACK_
 {
-   BYTE             NumRMWs;
+   uint8_t             NumRMWs;
    RMW_WORD_INFO    WordInfo[MAX_NUM_MULTI_WORD_RMWS];
 } RMW_MULTI_WORD_INFO, *pRMW_MULTI_WORD_INFO;
 
@@ -330,9 +328,9 @@ typedef struct _PACK_
    // If compiling USB firmware then add filler since Windows compiler
    // uses 4 byte enums rather than Keil's 1 byte
    #ifndef WIN_DRIVER
-   BYTE                  Filler[3];
+   uint8_t                  Filler[3];
    #endif
-   WORD             ExtTrig;          // board/subsystem  specific flags
+   uint16_t             ExtTrig;          // board/subsystem  specific flags
 
 } SUBSYSTEM_INFO, *pSUBSYSTEM_INFO;
 
@@ -341,14 +339,14 @@ typedef struct _PACK_
 //   Structure used for accessing ReadSingleValue commands
 typedef struct _PACK_
 {
-  BYTE			Channel;
+  uint8_t			Channel;
 } READ_SINGLE_VALUE_INFO, *pREAD_SINGLE_VALUE_INFO;
 
 
 //   Structure used for accessing ReadSingleValue commands
 typedef struct _PACK_
 {
-  BYTE			NumChans;
+  uint8_t			NumChans;
 } READ_SINGLE_VALUES_INFO, *pREAD_SINGLE_VALUES_INFO;
 
 
@@ -359,11 +357,11 @@ typedef struct _PACK_
   SUBSYSTEM_TYPE    SubsystemType; // Specifies  the subsystem type
   
   #ifndef WIN_DRIVER
-  BYTE                  Filler[3];
+  uint8_t                  Filler[3];
   #endif
 
-  BYTE  Channel;
-  WORD	DataValue;
+  uint8_t  Channel;
+  uint16_t	DataValue;
 } WRITE_SINGLE_VALUE_INFO, *pWRITE_SINGLE_VALUE_INFO;
 
 
@@ -390,8 +388,8 @@ typedef struct _PACK_
 // This structure is used with the W_INT_ON_CHANGE_MASK
 typedef struct _PACK_
 {
-   BYTE             PortNum;
-   BYTE             MaskVal;
+   uint8_t             PortNum;
+   uint8_t             MaskVal;
 } INT_ON_CHANGE_MASK_INFO, *pINT_ON_CHANGE_MASK_INFO;
 
 
@@ -402,17 +400,17 @@ typedef struct _PACK_
 
 typedef struct _PACK_ 
 {
-    BYTE    ChipNum;
-    BYTE    PotNum;
-    BYTE    RegNum;
-    BYTE    DataVal; 
+    uint8_t    ChipNum;
+    uint8_t    PotNum;
+    uint8_t    RegNum;
+    uint8_t    DataVal; 
 } WRITE_CAL_POT_INFO;
 
 typedef struct _PACK_ 
 {
-    BYTE    ChipNum;
-    BYTE    PotNum;
-    BYTE    RegNum;
+    uint8_t    ChipNum;
+    uint8_t    PotNum;
+    uint8_t    RegNum;
 } READ_CAL_POT_INFO;
 
 
@@ -441,7 +439,7 @@ typedef struct _PACK_
    // uses 4 byte enums rather than Keil's 2 byte. See note at the begining
    // of this file
    #ifndef WIN_DRIVER
-      BYTE                      Filler[3];
+      uint8_t                      Filler[3];
    #endif
    union _PACK_
    {
@@ -509,14 +507,14 @@ typedef enum _PACK_
 // This structure is used with the INT_STATUS_MSG
 typedef struct _PACK_
 {
-   BYTE             CtrNum;
+   uint8_t             CtrNum;
 } CTR_OVERFLOW_INFO, *pCTR_OVERFLOW_INFO;
 
 
 // This structure is used with the INT_ON_CHANGE_MSG
 typedef struct _PACK_
 {
-   BYTE             CurVal;
+   uint8_t             CurVal;
 } DIN_CHANGED_INFO, *pDIN_CHANGED_INFO;
 
 
@@ -540,7 +538,7 @@ typedef struct _PACK_
    // If compiling USB firmware then add filler since Windows compiler
    // uses 4 byte enums rather than Keil's 1 byte
    #ifndef WIN_DRIVER
-      BYTE                  Filler[3];
+      uint8_t                  Filler[3];
    #endif
 
    union _PACK_
@@ -553,6 +551,8 @@ typedef struct _PACK_
 // If building windows driver, restore normal structure packing
 #ifdef WIN_DRIVER
 #pragma pack (pop)
+#else
+#undef _PACK_
 #endif
 
 #endif // _FIRMWARETODRIVER_H_
